@@ -1,0 +1,1914 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Party Juice Hub · Trái Cây Mỗi Ngày</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            tropical: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d',
+            },
+            citrus: {
+              500: '#f97316',
+              600: '#ea580c',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+
+  <!-- Standalone GitHub Pages & Direct Google Sheets Adapter -->
+  <script>
+    (function() {
+      // Configuration: If publishing to GitHub Pages, you can either:
+      // 1. Paste your Webhook URL here as DEFAULT_GSHEET_WEBHOOK_URL, or
+      // 2. Set it interactively via the "📊 Sheet" button in the app (stored in browser localStorage)
+      window.DEFAULT_GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxOzZ2rY470Z7YLPJwq0WmpXGHcJk-rxzjwYoE2OUs1uECatVVWE7ZO3vbVbm1tl58/exec";
+
+      // If running inside ArtifactHub, window.ArtifactHub is already injected by the host
+      if (typeof window.ArtifactHub !== 'undefined' && !window.ArtifactHub.isStandalone) {
+        return;
+      }
+
+      function getWebhookUrl() {
+        if (window.DEFAULT_GSHEET_WEBHOOK_URL && window.DEFAULT_GSHEET_WEBHOOK_URL.startsWith('http')) {
+          return window.DEFAULT_GSHEET_WEBHOOK_URL.trim();
+        }
+        try {
+          return localStorage.getItem('party_gsheet_webhook_url') || '';
+        } catch (e) {
+          return '';
+        }
+      }
+
+      window.ArtifactHub = {
+        isStandalone: true,
+        getWebhookUrl: getWebhookUrl,
+        setWebhookUrl: function(url) {
+          try {
+            if (url) localStorage.setItem('party_gsheet_webhook_url', url.trim());
+            else localStorage.removeItem('party_gsheet_webhook_url');
+          } catch (e) {}
+        },
+        storage: {
+          get: async function(key) {
+            try { return localStorage.getItem(key); } catch (e) { return null; }
+          },
+          set: async function(key, val) {
+            try { localStorage.setItem(key, val); } catch (e) {}
+          }
+        },
+        db: {
+          from: function(tableName) {
+            let whereFilters = [];
+            const query = {
+              eq: function(col, val) {
+                whereFilters.push({ column: col, value: val, op: 'eq' });
+                return query;
+              },
+              order: function() { return query; },
+              limit: function() { return query; },
+              select: async function(columns) {
+                const webhookUrl = getWebhookUrl();
+                if (!webhookUrl) {
+                  return { data: [], error: 'Vui lòng cài đặt Google Sheet Webhook URL' };
+                }
+                try {
+                  const url = new URL(webhookUrl);
+                  url.searchParams.set('action', 'select');
+                  url.searchParams.set('operation', 'select');
+                  url.searchParams.set('table', tableName);
+                  url.searchParams.set('sheet', tableName);
+                  const res = await fetch(url.toString(), { method: 'GET', mode: 'cors' });
+                  if (!res.ok) throw new Error('HTTP ' + res.status);
+                  const json = await res.json();
+                  if (!json.ok) throw new Error(json.error || 'Lỗi đọc Google Sheet');
+                  let rows = json.data || [];
+                  if (whereFilters.length > 0) {
+                    rows = rows.filter(r => {
+                      return whereFilters.every(f => {
+                        const cellVal = r[f.column];
+                        return String(cellVal !== undefined && cellVal !== null ? cellVal : '').trim().toLowerCase() ===
+                               String(f.value !== undefined && f.value !== null ? f.value : '').trim().toLowerCase();
+                      });
+                    });
+                  }
+                  if (Array.isArray(columns) && columns.length > 0 && columns[0] !== '*') {
+                    rows = rows.map(r => {
+                      const proj = {};
+                      columns.forEach(c => { if (c in r || c === 'id') proj[c] = r[c]; });
+                      if ('id' in r && !('id' in proj)) proj.id = r.id;
+                      return proj;
+                    });
+                  }
+                  return { data: rows, error: null };
+                } catch (err) {
+                  return { data: [], error: err.message };
+                }
+              },
+              insert: async function(rowOrRows) {
+                const webhookUrl = getWebhookUrl();
+                if (!webhookUrl) return { data: [], error: 'Chưa cấu hình Google Sheet Webhook URL' };
+                try {
+                  const payload = {
+                    action: 'insert',
+                    operation: 'insert',
+                    table: tableName,
+                    sheet: tableName,
+                    data: rowOrRows,
+                    values: rowOrRows
+                  };
+                  const res = await fetch(webhookUrl, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                  });
+                  if (!res.ok) throw new Error('HTTP ' + res.status);
+                  const json = await res.json();
+                  if (!json.ok) throw new Error(json.error || 'Lỗi ghi vào Google Sheet');
+                  return { data: json.data || [rowOrRows], error: null };
+                } catch (err) {
+                  return { data: [], error: err.message };
+                }
+              },
+              update: async function(patch) {
+                const webhookUrl = getWebhookUrl();
+                if (!webhookUrl) return { data: [], error: 'Chưa cấu hình Google Sheet Webhook URL' };
+                try {
+                  const whereMap = {};
+                  whereFilters.forEach(f => { whereMap[f.column] = f.value; });
+                  const payload = {
+                    action: 'update',
+                    operation: 'update',
+                    table: tableName,
+                    sheet: tableName,
+                    data: patch,
+                    values: patch,
+                    where: whereMap,
+                    filters: whereFilters
+                  };
+                  const res = await fetch(webhookUrl, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                  });
+                  if (!res.ok) throw new Error('HTTP ' + res.status);
+                  const json = await res.json();
+                  if (!json.ok) throw new Error(json.error || 'Lỗi cập nhật Google Sheet');
+                  return { data: json.data || [patch], error: null };
+                } catch (err) {
+                  return { data: [], error: err.message };
+                }
+              },
+              delete: async function() {
+                const webhookUrl = getWebhookUrl();
+                if (!webhookUrl) return { data: [], error: 'Chưa cấu hình Google Sheet Webhook URL' };
+                try {
+                  const whereMap = {};
+                  whereFilters.forEach(f => { whereMap[f.column] = f.value; });
+                  const payload = {
+                    action: 'delete',
+                    operation: 'delete',
+                    table: tableName,
+                    sheet: tableName,
+                    where: whereMap,
+                    filters: whereFilters
+                  };
+                  const res = await fetch(webhookUrl, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                  });
+                  if (!res.ok) throw new Error('HTTP ' + res.status);
+                  const json = await res.json();
+                  if (!json.ok) throw new Error(json.error || 'Lỗi xóa trên Google Sheet');
+                  return { data: json.data, error: null };
+                } catch (err) {
+                  return { data: null, error: err.message };
+                }
+              }
+            };
+            return query;
+          }
+        }
+      };
+    })();
+  </script>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen antialiased flex flex-col">
+
+  <!-- Top Navigation Header -->
+  <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-30 shadow-lg">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
+      
+      <!-- Brand & Source Indicator -->
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-amber-500 flex items-center justify-center text-xl shadow-lg shadow-emerald-500/20">
+          🍹
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-bold text-base text-white tracking-tight">Party Juice Hub</h1>
+            <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              Trái Cây Mỗi Ngày
+            </span>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-slate-400">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span id="menu-sync-status">Đang tải menu live...</span>
+            <button id="btn-sync-menu" class="text-emerald-400 hover:text-emerald-300 underline text-[11px] ml-1">
+              ↻ Cập nhật
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Center Tabs -->
+      <nav class="hidden md:flex items-center bg-slate-950/80 border border-slate-800 p-1 rounded-xl text-xs font-semibold">
+        <button class="nav-tab px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 bg-emerald-600 text-white shadow" data-tab="catalog">
+          <span>🥤</span> Chọn Món & Đặt Ly
+        </button>
+        <button class="nav-tab px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 text-slate-400 hover:text-slate-200" data-tab="orders">
+          <span>📋</span> Danh Sách Đã Đặt <span id="badge-orders-count" class="ml-1 px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300 text-[10px]">0</span>
+        </button>
+        <button class="nav-tab px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 text-slate-400 hover:text-slate-200" data-tab="admin">
+          <span>⚡</span> Bơm Giỏ Hàng & Admin
+        </button>
+      </nav>
+
+      <!-- Right: User Name Chip & Cart Summary -->
+      <div class="flex items-center gap-2.5">
+        
+        <!-- Standalone Google Sheet Settings Button (visible when running standalone on GitHub Pages) -->
+        <button id="btn-gsheet-config" type="button" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/80 border border-emerald-500/30 text-emerald-400 hover:border-emerald-400 text-xs shadow-inner transition" title="Cài đặt Google Sheet Webhook">
+          <span>📊</span>
+          <span class="hidden sm:inline font-semibold">Sheet</span>
+        </button>
+
+        <!-- User Identity Chip (Visualizes Name at Top) -->
+        <div id="user-header-chip" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs shadow-inner">
+          <span class="text-slate-400">👤</span>
+          <strong id="display-user-name" class="text-white font-bold truncate max-w-[120px]">Chưa đặt tên</strong>
+          <button id="btn-edit-global-name" type="button" class="text-slate-400 hover:text-emerald-400 p-0.5 rounded transition" title="Đổi tên của bạn">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+          </button>
+        </div>
+
+        <!-- Mini Tally -->
+        <div class="bg-slate-950/80 border border-slate-800 px-3 py-1.5 rounded-xl text-right cursor-pointer hover:border-slate-700 transition" id="header-cart-summary">
+          <div class="text-[10px] text-slate-400 uppercase font-medium">Tạm tính đơn</div>
+          <div class="text-xs font-bold text-emerald-400 font-mono">
+            <span id="header-total-items">0</span> ly · <span id="header-total-price">0 ₫</span>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- Mobile Sub-navigation Bar -->
+    <div class="flex md:hidden border-t border-slate-800/80 bg-slate-900/95 px-4 py-2 justify-around text-xs font-medium">
+      <button class="nav-tab-m text-emerald-400 font-bold" data-tab="catalog">🥤 Chọn Món</button>
+      <button class="nav-tab-m text-slate-400" data-tab="orders">📋 Đã Đặt (<span id="badge-orders-count-m">0</span>)</button>
+      <button class="nav-tab-m text-slate-400" data-tab="admin">⚡ Bơm Giỏ Hàng</button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
+
+    <!-- ================= TAB 1: PRODUCT CATALOG & ORDERING ================= -->
+    <section id="tab-catalog" class="space-y-5">
+
+      <!-- Dynamic "Đơn của bạn" Panel (Easily View & Remove Your Drink) -->
+      <div id="my-orders-container">
+        <!-- Rendered dynamically -->
+      </div>
+      
+      <!-- Search & Category Filters -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
+        
+        <!-- Search Input -->
+        <div class="relative w-full md:w-80">
+          <input type="text" id="search-input" placeholder="Tìm món: bơ, cam, xoài, dừa, mít..."
+            class="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-4 py-2 pl-9 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 shadow-inner" />
+          <svg class="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+        </div>
+
+        <!-- Category Pills -->
+        <div class="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto pb-1 md:pb-0" id="category-filters">
+          <button class="cat-pill px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow transition whitespace-nowrap" data-cat="all">
+            Tất cả (<span id="cat-count-all">0</span>)
+          </button>
+          <button class="cat-pill px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:bg-slate-800 transition whitespace-nowrap" data-cat="SINH TỐ">
+            🥑 Sinh Tố
+          </button>
+          <button class="cat-pill px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:bg-slate-800 transition whitespace-nowrap" data-cat="NƯỚC ÉP">
+            🍊 Nước Ép
+          </button>
+          <button class="cat-pill px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:bg-slate-800 transition whitespace-nowrap" data-cat="TRÁI CÂY SỮA TUYẾT">
+            🍧 Trái Cây Sữa Tuyết
+          </button>
+          <button class="cat-pill px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:bg-slate-800 transition whitespace-nowrap" data-cat="TRÀ THẢO MỘC">
+            🍵 Trà Thảo Mộc
+          </button>
+          <button class="cat-pill px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:bg-slate-800 transition whitespace-nowrap" data-cat="ĂN VẶT">
+            🥨 Ăn Vặt
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Product Cards Grid -->
+      <div id="product-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <!-- Empty State -->
+      <div id="catalog-empty" class="hidden text-center py-16 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
+        <div class="text-4xl mb-3">🔍</div>
+        <h3 class="font-bold text-slate-300 text-sm">Không tìm thấy món phù hợp</h3>
+        <p class="text-xs text-slate-500 mt-1">Vui lòng thử tìm từ khóa khác hoặc chuyển danh mục.</p>
+      </div>
+
+    </section>
+
+    <!-- ================= TAB 2: ORDERS LIST & TALLY ================= -->
+    <section id="tab-orders" class="hidden space-y-6">
+
+      <!-- KPI Overview Cards -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 relative overflow-hidden">
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Tổng số ly đã đặt</p>
+          <h3 class="text-2xl font-extrabold text-white mt-1 font-mono" id="tally-total-items">0</h3>
+          <p class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
+            <span>🥤</span> Ly nước tiệc
+          </p>
+        </div>
+
+        <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 relative overflow-hidden">
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Tổng tiền tạm tính</p>
+          <h3 class="text-2xl font-extrabold text-emerald-400 mt-1 font-mono" id="tally-total-price">0 ₫</h3>
+          <p class="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+            <span>💰</span> Theo giá niêm yết
+          </p>
+        </div>
+
+        <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 relative overflow-hidden">
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Thành viên tham gia</p>
+          <h3 class="text-2xl font-extrabold text-purple-400 mt-1 font-mono" id="tally-total-users">0</h3>
+          <p class="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+            <span>👤</span> Người đã gửi món
+          </p>
+        </div>
+
+        <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 relative overflow-hidden">
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Món hot nhất</p>
+          <h3 class="text-sm font-bold text-white mt-2 truncate" id="tally-top-drink">Chưa có đơn</h3>
+          <p class="text-[11px] text-amber-400 mt-1" id="tally-top-count">0 ly</p>
+        </div>
+      </div>
+
+      <!-- Prep Summary Checklist for Store/Admin -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-3">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div>
+            <h2 class="font-bold text-white text-sm flex items-center gap-2">
+              <span>📋</span> Tóm Tắt Danh Sách Pha Chế (Prep Checklist)
+            </h2>
+            <p class="text-xs text-slate-400">Gộp các ly cùng loại để quán pha chế nhanh và chính xác nhất</p>
+          </div>
+          <button id="btn-copy-prep-summary" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition">
+            <span>📋</span> Sao chép tóm tắt
+          </button>
+        </div>
+
+        <div id="prep-checklist" class="space-y-2">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+      <!-- Detailed Orders Table -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900">
+          <div>
+            <h2 class="font-bold text-white text-sm flex items-center gap-2">
+              <span>👥</span> Chi Tiết Từng Người Đặt
+            </h2>
+            <p class="text-xs text-slate-400">Có thể xóa ly hoặc thay đổi tùy chọn bất cứ lúc nào</p>
+          </div>
+          <button id="btn-refresh-orders" class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition">
+            ↻ Làm mới
+          </button>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead class="bg-slate-950/70 border-b border-slate-800 text-slate-400 uppercase font-semibold">
+              <tr>
+                <th class="py-3 px-4">Người đặt</th>
+                <th class="py-3 px-4">Món nước</th>
+                <th class="py-3 px-3">Size / Loại</th>
+                <th class="py-3 px-3">Độ ngọt</th>
+                <th class="py-3 px-3">Đá</th>
+                <th class="py-3 px-4">Ghi chú</th>
+                <th class="py-3 px-4 text-right">Giá tiền</th>
+                <th class="py-3 px-4 text-center">Xóa</th>
+              </tr>
+            </thead>
+            <tbody id="orders-tbody" class="divide-y divide-slate-800/60 font-medium">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================= TAB 3: ADMIN & CART INJECTOR ================= -->
+    <section id="tab-admin" class="hidden space-y-6">
+
+      <!-- Pre-flight Stock Sanity Check Banner -->
+      <div id="stock-check-banner" class="bg-emerald-950/40 border border-emerald-800/80 rounded-2xl p-4 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-base">
+            ✓
+          </div>
+          <div>
+            <h3 class="font-bold text-white text-sm">Kiểm Tra Trực Tuyến: Toàn bộ món đều có hàng</h3>
+            <p class="text-xs text-slate-400">Tất cả các món team chọn đều khớp mã variant hợp lệ trên traicaymoingay.com</p>
+          </div>
+        </div>
+        <button id="btn-recheck-stock" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition">
+          Kiểm tra lại kho
+        </button>
+      </div>
+
+      <!-- Three Automated Export Methods -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Method 1: 1-Click Bookmarklet Injector -->
+        <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between space-y-4">
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-bold">1</span>
+              <h3 class="font-bold text-white text-sm">Nút Kéo Bookmarklet (Khuyên Dùng)</h3>
+            </div>
+            <p class="text-xs text-slate-400 leading-relaxed mb-4">
+              Kéo nút bên dưới lên thanh Dấu trang (Bookmarks bar) của trình duyệt. Sau đó mở website Trái Cây Mỗi Ngày và bấm nút này để tự động nạp toàn bộ giỏ hàng trong 2 giây!
+            </p>
+            
+            <!-- Draggable Bookmarklet Button -->
+            <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 text-center">
+              <a id="bookmarklet-link" href="#" class="inline-block px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold text-xs shadow-lg hover:from-emerald-500 hover:to-teal-500 transition cursor-grab active:cursor-grabbing">
+                🍹 Auto-Cart Trái Cây Mỗi Ngày
+              </a>
+              <div class="text-[11px] text-slate-500 mt-2">↑ Kéo nút này thả vào thanh Bookmarks của bạn</div>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-slate-800 flex items-center justify-between">
+            <span class="text-xs text-slate-400">Bước tiếp theo:</span>
+            <a href="https://traicaymoingay.com" target="_blank" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-semibold inline-flex items-center gap-1.5">
+              <span>Mở website quán</span> ↗
+            </a>
+          </div>
+        </div>
+
+        <!-- Method 2: F12 Console Script -->
+        <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between space-y-4">
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="w-6 h-6 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center text-xs font-bold">2</span>
+              <h3 class="font-bold text-white text-sm">Sao Chép Script F12 Console</h3>
+            </div>
+            <p class="text-xs text-slate-400 leading-relaxed mb-3">
+              Mở <code class="text-purple-300">traicaymoingay.com</code>, bấm <kbd class="px-1 py-0.5 rounded bg-slate-800 border border-slate-700">F12</kbd> (Console), dán mã bên dưới và nhấn Enter.
+            </p>
+            <div class="relative">
+              <textarea id="console-script-box" readonly rows="4"
+                class="w-full bg-slate-950 text-emerald-400 font-mono text-[11px] p-2.5 rounded-xl border border-slate-800 resize-none focus:outline-none"></textarea>
+            </div>
+          </div>
+
+          <button id="btn-copy-console-script" class="w-full py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold flex items-center justify-center gap-2 transition shadow">
+            <span>📋</span> Sao Chép Mã Script Console
+          </button>
+        </div>
+
+        <!-- Method 3: Zalo / Hotline Formatted Bill -->
+        <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col justify-between space-y-4">
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs font-bold">3</span>
+              <h3 class="font-bold text-white text-sm">Xuất Tin Nhắn Zalo / Hotline</h3>
+            </div>
+            <p class="text-xs text-slate-400 leading-relaxed mb-3">
+              Định dạng danh sách đặt món hoàn chỉnh, phân loại rõ ràng để gửi Zalo cho quán xuất hóa đơn VAT công ty.
+            </p>
+            <div class="relative">
+              <textarea id="zalo-message-box" readonly rows="4"
+                class="w-full bg-slate-950 text-amber-200 font-mono text-[11px] p-2.5 rounded-xl border border-slate-800 resize-none focus:outline-none"></textarea>
+            </div>
+          </div>
+
+          <button id="btn-copy-zalo" class="w-full py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center justify-center gap-2 transition shadow">
+            <span>💬</span> Sao Chép Tin Nhắn Zalo
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Session Management -->
+      <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
+        <div>
+          <h4 class="font-bold text-slate-300 text-xs">Quản lý phiên tiệc</h4>
+          <p class="text-[11px] text-slate-500">Xóa các đơn hiện tại để bắt đầu thu thập đơn cho đợt tiệc mới</p>
+        </div>
+        <button id="btn-clear-session" class="px-3.5 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900 border border-rose-800/80 text-rose-300 text-xs font-semibold transition">
+          🗑️ Xóa toàn bộ đơn & Reset tiệc
+        </button>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ================= FIRST-TIME WELCOME & NAME EDIT MODAL ================= -->
+  <div id="name-modal" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden" style="display: none;">
+    <div class="relative bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+      <button id="btn-close-name-modal" type="button" class="absolute top-4 right-4 w-7 h-7 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-xs transition hidden">
+        ✕
+      </button>
+
+      <div class="text-center">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-amber-500 mx-auto flex items-center justify-center text-2xl shadow-lg shadow-emerald-500/20 mb-3">
+          🍹
+        </div>
+        <h3 id="name-modal-title" class="font-extrabold text-white text-base">Chào mừng bạn đến với đơn tiệc!</h3>
+        <p class="text-xs text-slate-400 mt-1">Vui lòng nhập họ tên hoặc nickname để hệ thống tự động gắn tên bạn vào ly nước</p>
+      </div>
+
+      <form id="name-form" class="space-y-3">
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+            Họ tên / Nickname <span class="text-emerald-400">*</span>
+          </label>
+          <input type="text" id="input-global-name" required placeholder="e.g. Phong (Dev Team), Lan Chi..."
+            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500" />
+        </div>
+
+        <div class="flex items-center gap-2 pt-1">
+          <button id="btn-cancel-name-modal" type="button" class="hidden flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition">
+            Hủy
+          </button>
+          <button type="submit" class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg transition">
+            Lưu tên & Bắt đầu ➔
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= RESET PARTY CONFIRMATION MODAL ================= -->
+  <div id="reset-modal" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden" style="display: none;">
+    <div class="relative bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+      <div class="text-center">
+        <div class="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 mx-auto flex items-center justify-center text-2xl shadow-lg border border-rose-500/30 mb-3">
+          🗑️
+        </div>
+        <h3 class="font-extrabold text-white text-base">Xác nhận làm mới phiên tiệc?</h3>
+        <p class="text-xs text-slate-400 mt-2 leading-relaxed">
+          Hành động này sẽ xóa toàn bộ đơn đặt món hiện tại để bắt đầu thu thập đơn cho đợt tiệc mới. Thao tác này không thể hoàn tác!
+        </p>
+      </div>
+
+      <div class="flex items-center gap-2 pt-2">
+        <button id="btn-cancel-reset" type="button" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition">
+          Hủy bỏ
+        </button>
+        <button id="btn-confirm-reset" type="button" class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-bold text-xs shadow-lg transition">
+          Xóa toàn bộ & Reset
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= DRINK ORDER CUSTOMIZATION MODAL ================= -->
+  <div id="order-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden" style="display: none;">
+    <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+      
+      <!-- Modal Header with Image -->
+      <div class="relative h-44 bg-slate-950 shrink-0 overflow-hidden">
+        <img id="modal-img" src="" alt="" class="w-full h-full object-cover" />
+        <div class="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent"></div>
+        <button id="btn-close-modal" type="button" class="absolute top-3 right-3 w-8 h-8 rounded-full bg-slate-900/80 backdrop-blur text-slate-300 hover:text-white flex items-center justify-center text-sm shadow">
+          ✕
+        </button>
+        <div class="absolute bottom-3 left-4 right-4">
+          <span id="modal-category" class="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/60">
+            SINH TỐ
+          </span>
+          <h3 id="modal-title" class="font-extrabold text-white text-base mt-1 truncate">Sinh Tố Bơ</h3>
+        </div>
+      </div>
+
+      <!-- Modal Body (Form Options) -->
+      <form id="order-form" class="p-5 space-y-4 overflow-y-auto flex-1">
+
+        <!-- User Identity Preview inside modal -->
+        <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
+          <span class="text-slate-400" id="modal-user-label">Người uống ly này:</span>
+          <div class="flex items-center gap-1.5">
+            <strong id="modal-order-username" class="text-white font-bold">--</strong>
+            <button type="button" id="btn-modal-change-user" class="text-emerald-400 hover:text-emerald-300 text-[11px] underline">Đổi</button>
+          </div>
+        </div>
+
+        <!-- Variant / Size Selector -->
+        <div>
+          <label id="modal-variant-label" class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+            Chọn Size / Loại Ly
+          </label>
+          <div id="modal-variants-list" class="space-y-1.5">
+            <!-- Dynamically rendered radio options -->
+          </div>
+        </div>
+
+        <!-- Sugar Level Selection (Hidden for Food/Snacks) -->
+        <div id="modal-sugar-group">
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+            Độ ngọt (Lượng đường)
+          </label>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-emerald-500/50">
+              <input type="radio" name="sugar" value="100% đường (Chuẩn)" checked class="text-emerald-500 focus:ring-0" />
+              <span class="text-slate-200">100% đường</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-emerald-500/50">
+              <input type="radio" name="sugar" value="70% đường" class="text-emerald-500 focus:ring-0" />
+              <span class="text-slate-200">70% đường</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-emerald-500/50">
+              <input type="radio" name="sugar" value="50% đường (Ít ngọt)" class="text-emerald-500 focus:ring-0" />
+              <span class="text-slate-200">50% đường (Ít ngọt)</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-emerald-500/50">
+              <input type="radio" name="sugar" value="0% đường (Nguyên chất)" class="text-emerald-500 focus:ring-0" />
+              <span class="text-slate-200">0% đường</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Ice Level Selection (Hidden for Food/Snacks) -->
+        <div id="modal-ice-group">
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+            Lượng đá
+          </label>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-emerald-500/50">
+              <input type="radio" name="ice" value="Đá riêng (Khuyên dùng)" checked class="text-emerald-500 focus:ring-0" />
+              <span class="text-slate-200">Đá riêng ❄️</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-emerald-500/50">
+              <input type="radio" name="ice" value="Ít đá" class="text-emerald-500 focus:ring-0" />
+              <span class="text-slate-200">Ít đá</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-emerald-500/50">
+              <input type="radio" name="ice" value="Không đá" class="text-emerald-500 focus:ring-0" />
+              <span class="text-slate-200">Không đá</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 cursor-pointer hover:border-emerald-500/50">
+              <input type="radio" name="ice" value="Đá chung" class="text-emerald-500 focus:ring-0" />
+              <span class="text-slate-200">Đá chung</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Note -->
+        <div>
+          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+            Ghi chú thêm (tùy chọn)
+          </label>
+          <input type="text" id="order-note" placeholder="e.g. Ít chua, thêm muỗng..."
+            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500" />
+        </div>
+
+        <!-- Submit Button & Total -->
+        <div class="pt-3 border-t border-slate-800 flex items-center justify-between">
+          <div>
+            <div class="text-[10px] text-slate-400 uppercase">Giá tiền</div>
+            <div class="text-base font-extrabold text-emerald-400 font-mono" id="modal-selected-price">
+              0 ₫
+            </div>
+          </div>
+          <button type="submit" id="btn-submit-order" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg transition flex items-center gap-2">
+            <span id="btn-submit-order-text">Xác nhận đặt ly này</span>
+          </button>
+        </div>
+
+      </form>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed bottom-5 right-5 z-50 transform transition-all duration-300 translate-y-20 opacity-0 pointer-events-none">
+    <div class="bg-slate-800 text-white border border-slate-700 rounded-xl shadow-2xl px-4 py-2.5 text-xs flex items-center gap-2" id="toast-body">
+      <span id="toast-icon">✓</span>
+      <span id="toast-message">Thông báo</span>
+    </div>
+  </div>
+
+  <!-- Google Sheet Configuration Modal (for Standalone GitHub Pages mode) -->
+  <div id="modal-gsheet-config" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <span>📊</span> Cài đặt Google Sheet Webhook
+        </h3>
+        <button id="btn-close-gsheet-config" class="text-slate-400 hover:text-slate-200 text-xl font-bold p-1 leading-none">&times;</button>
+      </div>
+      <p class="text-xs text-slate-300 leading-relaxed">
+        Khi chạy trực tiếp trên <strong>GitHub Pages</strong>, hãy dán URL Web App của Google Apps Script bên dưới để website tự động đồng bộ và lưu đơn hàng vào Google Sheet của bạn.
+      </p>
+      <div>
+        <label class="block text-xs font-semibold text-slate-400 mb-1">Google Apps Script Web App URL</label>
+        <input id="input-gsheet-url" type="url" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono" />
+      </div>
+      <div class="flex items-center justify-end gap-2 pt-2">
+        <button id="btn-save-gsheet-url" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition shadow">
+          Lưu & Đồng bộ ngay
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main JavaScript Controller -->
+  <script>
+    // Safe storage helper with ArtifactHub persistent browser storage bridge
+    const safeStorage = {
+      _mem: {},
+      _initPromise: null,
+
+      init() {
+        if (this._initPromise) return this._initPromise;
+        this._initPromise = (async () => {
+          // 1. Try local window.localStorage
+          try {
+            if (typeof window !== 'undefined' && window.localStorage) {
+              const localVal = window.localStorage.getItem('party_user_name');
+              if (localVal) this._mem['party_user_name'] = localVal;
+            }
+          } catch (e) {}
+
+          // 2. Try ArtifactHub.storage bridge (parent host localStorage on http://localhost:8787)
+          try {
+            if (window.ArtifactHub && window.ArtifactHub.storage) {
+              const hostVal = await window.ArtifactHub.storage.get('party_user_name');
+              if (hostVal) this._mem['party_user_name'] = hostVal;
+            }
+          } catch (e) {}
+
+          return this._mem['party_user_name'] || null;
+        })();
+        return this._initPromise;
+      },
+
+      get(key) {
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            const v = window.localStorage.getItem(key);
+            if (v) return v;
+          }
+        } catch (e) {}
+        return this._mem[key] || null;
+      },
+
+      async set(key, value) {
+        this._mem[key] = value;
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            window.localStorage.setItem(key, value);
+          }
+        } catch (e) {}
+
+        try {
+          if (window.ArtifactHub && window.ArtifactHub.storage) {
+            await window.ArtifactHub.storage.set(key, value);
+          }
+        } catch (e) {}
+      }
+    };
+
+    // State
+    let productsList = [];
+    let currentOrders = [];
+    let selectedProduct = null;
+    let selectedVariant = null;
+    let activeCategory = 'all';
+
+    // Currency Formatter
+    function formatVND(amount) {
+      return Number(amount || 0).toLocaleString('vi-VN') + ' ₫';
+    }
+
+    // Helper to determine if product is food/snack/dessert (No sugar or ice levels)
+    function isFoodItem(product) {
+      if (!product) return false;
+      const ptype = (product.product_type || '').toUpperCase().trim();
+      const title = (product.title || '').toLowerCase();
+      if (ptype === 'ĂN VẶT' || ptype === 'FOOD' || ptype === 'SNACK' || ptype === 'BÁNH' || ptype === 'TRÁI CÂY TÔ' || ptype === 'TRÁI CÂY DĨA') {
+        return true;
+      }
+      if (title.includes('flan') || title.includes('bánh tráng') || title.includes('snack') || title.includes('khô gà') || title.includes('hạt điều') || title.includes('trái cây tô') || title.includes('trái cây dĩa')) {
+        return true;
+      }
+      return false;
+    }
+
+    // Helper for visual icons
+    function getItemIcon(title, isFood) {
+      const t = (title || '').toLowerCase();
+      if (t.includes('flan')) return '🍮';
+      if (t.includes('bánh tráng') || isFood) return '🥨';
+      if (t.includes('bơ') || t.includes('sinh tố')) return '🥑';
+      if (t.includes('cam') || t.includes('nước ép')) return '🍊';
+      if (t.includes('trà')) return '🍵';
+      if (t.includes('sữa tuyết') || t.includes('tuyết')) return '🍧';
+      return '🥤';
+    }
+
+    // Toast Helper
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      const body = document.getElementById('toast-body');
+      const icon = document.getElementById('toast-icon');
+      const msg = document.getElementById('toast-message');
+
+      msg.textContent = message;
+      if (type === 'error') {
+        icon.textContent = '✕';
+        body.className = 'bg-rose-950 text-rose-200 border border-rose-800 rounded-xl shadow-2xl px-4 py-2.5 text-xs flex items-center gap-2';
+      } else {
+        icon.textContent = '✓';
+        body.className = 'bg-slate-800 text-white border border-slate-700 rounded-xl shadow-2xl px-4 py-2.5 text-xs flex items-center gap-2';
+      }
+
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      setTimeout(() => {
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 3500);
+    }
+
+    // Safe clipboard copy helper with fallback
+    function copyText(text, successMsg) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(() => {
+            showToast(successMsg);
+          }).catch(() => {
+            fallbackCopy(text, successMsg);
+          });
+          return;
+        }
+      } catch (e) {}
+      fallbackCopy(text, successMsg);
+    }
+
+    function fallbackCopy(text, successMsg) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const success = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (success) {
+          showToast(successMsg);
+          return;
+        }
+      } catch (err) {}
+      showToast('Đã tạo nội dung, vui lòng sao chép thủ công', 'info');
+    }
+
+    // Tab Switching
+    function setTab(tabId) {
+      document.querySelectorAll('.nav-tab').forEach(btn => {
+        if (btn.getAttribute('data-tab') === tabId) {
+          btn.className = 'nav-tab px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 bg-emerald-600 text-white shadow';
+        } else {
+          btn.className = 'nav-tab px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5 text-slate-400 hover:text-slate-200';
+        }
+      });
+
+      document.querySelectorAll('.nav-tab-m').forEach(btn => {
+        if (btn.getAttribute('data-tab') === tabId) {
+          btn.className = 'nav-tab-m text-emerald-400 font-bold';
+        } else {
+          btn.className = 'nav-tab-m text-slate-400';
+        }
+      });
+
+      document.getElementById('tab-catalog').classList.toggle('hidden', tabId !== 'catalog');
+      document.getElementById('tab-orders').classList.toggle('hidden', tabId !== 'orders');
+      document.getElementById('tab-admin').classList.toggle('hidden', tabId !== 'admin');
+
+      if (tabId === 'orders') renderOrdersView();
+      if (tabId === 'admin') renderAdminView();
+    }
+
+    // Update Header Global User Name
+    function updateHeaderUserName() {
+      const name = (safeStorage.get('party_user_name') || '').trim();
+      const displayEl = document.getElementById('display-user-name');
+      if (name) {
+        displayEl.textContent = name;
+        displayEl.className = 'text-white font-bold truncate max-w-[120px]';
+      } else {
+        displayEl.textContent = 'Chưa đặt tên';
+        displayEl.className = 'text-amber-400 font-medium italic truncate max-w-[120px]';
+      }
+    }
+
+    // Open Name Prompt Modal
+    function openNameModal(isEdit = false) {
+      const modal = document.getElementById('name-modal');
+      const titleEl = document.getElementById('name-modal-title');
+      const input = document.getElementById('input-global-name');
+      const cancelBtn = document.getElementById('btn-cancel-name-modal');
+      const closeBtn = document.getElementById('btn-close-name-modal');
+      const currentName = (safeStorage.get('party_user_name') || '').trim();
+
+      if (isEdit || currentName) {
+        titleEl.textContent = 'Đổi tên người đặt';
+        input.value = currentName;
+        if (cancelBtn) cancelBtn.classList.remove('hidden');
+        if (closeBtn) closeBtn.classList.remove('hidden');
+      } else {
+        titleEl.textContent = 'Chào mừng bạn đến với đơn tiệc! 👋';
+        input.value = '';
+        if (cancelBtn) cancelBtn.classList.add('hidden');
+        if (closeBtn) closeBtn.classList.add('hidden');
+      }
+
+      modal.style.display = 'flex';
+      modal.classList.remove('hidden');
+      setTimeout(() => input.focus(), 100);
+    }
+
+    function closeNameModal() {
+      const modal = document.getElementById('name-modal');
+      modal.style.display = 'none';
+      modal.classList.add('hidden');
+    }
+
+    // Save Name from Prompt Modal
+    async function handleSaveName(e) {
+      e.preventDefault();
+      const input = document.getElementById('input-global-name');
+      const newName = input.value.trim();
+      if (!newName) {
+        showToast('Vui lòng nhập tên của bạn', 'error');
+        return;
+      }
+
+      const oldName = safeStorage.get('party_user_name') || '';
+      await safeStorage.set('party_user_name', newName);
+      updateHeaderUserName();
+      closeNameModal();
+      showToast(`Đã lưu tên: "${newName}"`);
+
+      // If user had existing orders under their old name, update them in database
+      if (oldName && oldName.toLowerCase() !== newName.toLowerCase() && currentOrders.length > 0) {
+        try {
+          const matching = currentOrders.filter(o => o.user_name && o.user_name.trim().toLowerCase() === oldName.toLowerCase());
+          if (matching.length > 0 && window.ArtifactHub && typeof window.ArtifactHub.db === 'object') {
+            for (const o of matching) {
+              await window.ArtifactHub.db.from('party_orders').update({ user_name: newName }).eq('id', o.id);
+            }
+            await loadOrders();
+            showToast(`Đã cập nhật tên trên ${matching.length} ly nước đã đặt!`);
+          }
+        } catch (err) {
+          console.warn('Could not update old orders name:', err);
+        }
+      }
+
+      renderMyOrdersBanner();
+    }
+
+    // Fetch Live Menu from traicaymoingay.com
+    async function syncMenu() {
+      const statusEl = document.getElementById('menu-sync-status');
+      statusEl.textContent = 'Đang đồng bộ từ website...';
+
+      try {
+        const [res1, res2] = await Promise.all([
+          fetch('https://traicaymoingay.com/collections/all/products.json?limit=50&page=1'),
+          fetch('https://traicaymoingay.com/collections/all/products.json?limit=50&page=2')
+        ]);
+
+        const data1 = await res1.json();
+        const data2 = await res2.json();
+        productsList = [...(data1.products || []), ...(data2.products || [])];
+
+        safeStorage.set('cached_party_menu', JSON.stringify({
+          timestamp: Date.now(),
+          products: productsList
+        }));
+
+        statusEl.textContent = `🟢 Live Menu: ${productsList.length} món`;
+        document.getElementById('cat-count-all').textContent = productsList.length;
+        renderCatalog();
+        showToast(`Đã đồng bộ ${productsList.length} món từ Trái Cây Mỗi Ngày!`);
+      } catch (err) {
+        console.warn('Live fetch failed, loading local cache:', err);
+        const cached = safeStorage.get('cached_party_menu');
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached);
+            productsList = parsed.products || [];
+            statusEl.textContent = `🟡 Menu Cache (${productsList.length} món)`;
+            document.getElementById('cat-count-all').textContent = productsList.length;
+            renderCatalog();
+            showToast('Đang dùng menu đã lưu tạm (offline)', 'error');
+            return;
+          } catch (e) {}
+        }
+        statusEl.textContent = '✕ Lỗi kết nối menu';
+        showToast('Không thể tải menu: ' + err.message, 'error');
+      }
+    }
+
+    // Render Product Catalog Cards
+    function renderCatalog() {
+      const grid = document.getElementById('product-grid');
+      const emptyEl = document.getElementById('catalog-empty');
+      const searchTerm = document.getElementById('search-input').value.toLowerCase().trim();
+
+      const filtered = productsList.filter(p => {
+        const matchCat = activeCategory === 'all' || p.product_type === activeCategory;
+        const matchSearch = !searchTerm || p.title.toLowerCase().includes(searchTerm) || (p.tags && p.tags.toLowerCase().includes(searchTerm));
+        return matchCat && matchSearch;
+      });
+
+      if (filtered.length === 0) {
+        grid.innerHTML = '';
+        emptyEl.classList.remove('hidden');
+        return;
+      }
+
+      emptyEl.classList.add('hidden');
+      grid.innerHTML = filtered.map(p => {
+        const variants = p.variants || [];
+        const isAvailable = p.available && variants.some(v => v.available);
+        const prices = variants.map(v => Number(v.price) || 0).filter(pr => pr > 0);
+        const minPrice = prices.length ? Math.min(...prices) : 0;
+        const maxPrice = prices.length ? Math.max(...prices) : 0;
+        const priceDisplay = minPrice === maxPrice ? formatVND(minPrice) : `${formatVND(minPrice)} - ${formatVND(maxPrice)}`;
+        const imgSrc = p.images && p.images[0] ? p.images[0].src : 'https://placehold.co/400x300/0f172a/white?text=Juice';
+
+        const isFood = isFoodItem(p);
+        const actionText = isFood ? 'Chọn món này' : 'Chọn ly này';
+
+        return `
+          <div class="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-lg hover:border-slate-700 transition flex flex-col group ${!isAvailable ? 'opacity-60' : ''}">
+            <div class="relative h-44 bg-slate-950 overflow-hidden">
+              <img src="${imgSrc}" alt="${p.title}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
+              <span class="absolute top-2.5 left-2.5 text-[10px] font-bold uppercase tracking-wider text-emerald-300 bg-slate-900/90 backdrop-blur px-2 py-0.5 rounded-full border border-slate-700">
+                ${p.product_type || (isFood ? 'ĂN VẶT' : 'ĐỒ UỐNG')}
+              </span>
+              ${!isAvailable ? `<span class="absolute top-2.5 right-2.5 text-[10px] font-bold text-rose-300 bg-rose-950/90 px-2 py-0.5 rounded-full border border-rose-800">Hết hàng</span>` : ''}
+            </div>
+
+            <div class="p-4 flex-1 flex flex-col justify-between space-y-3">
+              <div>
+                <h4 class="font-bold text-white text-sm line-clamp-2 title-tooltip" title="${p.title}">
+                  ${p.title}
+                </h4>
+                <div class="text-xs font-mono font-bold text-emerald-400 mt-1">
+                  ${priceDisplay}
+                </div>
+              </div>
+
+              <button type="button" class="w-full py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow ${isAvailable ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer btn-open-modal' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}"
+                data-id="${p.id}" ${!isAvailable ? 'disabled' : ''}>
+                <span>${isAvailable ? actionText : 'Tạm hết'}</span>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Render "Đơn của bạn" Panel (User Can Simply Remove Drink To Pick Another)
+    function renderMyOrdersBanner() {
+      const container = document.getElementById('my-orders-container');
+      const savedName = (safeStorage.get('party_user_name') || '').trim().toLowerCase();
+
+      if (!savedName || currentOrders.length === 0) {
+        container.innerHTML = '';
+        return;
+      }
+
+      // Find all orders placed by this user name
+      const myOrders = currentOrders.filter(o => o.user_name && o.user_name.trim().toLowerCase() === savedName);
+
+      if (myOrders.length === 0) {
+        container.innerHTML = '';
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="bg-gradient-to-r from-emerald-950/70 via-slate-900 to-slate-900 border border-emerald-500/40 rounded-2xl p-4 shadow-xl space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-300 flex items-center justify-center text-xs font-bold">
+                ✓
+              </span>
+              <span class="text-xs font-bold text-white">
+                Món / Ly bạn đã chọn (<span class="text-emerald-400">${safeStorage.get('party_user_name')}</span>)
+              </span>
+              <span class="text-[10px] px-2 py-0.5 rounded-full font-mono bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                ${myOrders.length} phần
+              </span>
+            </div>
+            <span class="text-[11px] text-slate-400 hidden sm:inline">Muốn đổi món khác? Chỉ cần bấm <strong>"Bỏ món/ly này"</strong> rồi chọn món mới bên dưới!</span>
+          </div>
+
+          <div class="space-y-2">
+            ${myOrders.map((o) => {
+              const isFood = (o.sugar_level === 'Mặc định' || o.sugar_level === '-' || isFoodItem({ product_type: '', title: o.item_title }));
+              const icon = getItemIcon(o.item_title, isFood);
+              return `
+              <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center font-bold text-base shrink-0">
+                    ${icon}
+                  </div>
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <h4 class="font-bold text-white text-xs">${o.item_title}</h4>
+                      <span class="text-[10px] text-slate-400 font-mono">(${o.variant_title})</span>
+                    </div>
+                    <div class="text-[11px] text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
+                      ${!isFood ? `
+                        <span>Độ ngọt: <strong class="text-purple-300">${o.sugar_level}</strong></span>
+                        <span>•</span>
+                        <span>Đá: <strong class="text-cyan-300">${o.ice_level}</strong></span>
+                        <span>•</span>
+                      ` : `
+                        <span class="text-amber-300 font-medium">Món ăn vặt / Tráng miệng</span>
+                        <span>•</span>
+                      `}
+                      <span class="font-mono font-bold text-emerald-400">${formatVND(o.price)}</span>
+                      ${o.note ? `<span>• <em>"${o.note}"</em></span>` : ''}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Single Clean Remove Action: Allows user to change mind immediately -->
+                <div class="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  <button type="button" class="btn-remove-my-drink px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900 border border-rose-800/80 text-rose-200 text-xs font-semibold flex items-center gap-1.5 transition shadow" data-id="${o.id}" data-title="${o.item_title}">
+                    <span>🗑️</span> ${isFood ? 'Bỏ món này để chọn lại' : 'Bỏ ly này để chọn lại'}
+                  </button>
+                </div>
+              </div>
+            `;}).join('')}
+          </div>
+        </div>
+      `;
+
+      // Wire remove button: Removes this drink so user can pick any other drink from catalog
+      container.querySelectorAll('.btn-remove-my-drink').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const id = Number(btn.getAttribute('data-id'));
+          const title = btn.getAttribute('data-title');
+          deleteOrder(id, `Đã bỏ "${title}". Bây giờ bạn có thể chọn món mới bên dưới!`);
+        });
+      });
+    }
+
+    // Open Order Customization Modal
+    function openOrderModal(productId) {
+      if (!productId) return;
+
+      // If user hasn't set their name yet, prompt for name first
+      const currentUserName = (safeStorage.get('party_user_name') || '').trim();
+      if (!currentUserName) {
+        openNameModal(false);
+        return;
+      }
+
+      selectedProduct = productsList.find(p => String(p.id) === String(productId));
+      if (!selectedProduct) {
+        console.warn('Product not found for id:', productId);
+        return;
+      }
+
+      const isFood = isFoodItem(selectedProduct);
+      const modal = document.getElementById('order-modal');
+      const imgSrc = selectedProduct.images && selectedProduct.images[0] ? selectedProduct.images[0].src : '';
+      
+      document.getElementById('modal-img').src = imgSrc;
+      document.getElementById('modal-title').textContent = selectedProduct.title;
+      document.getElementById('modal-category').textContent = selectedProduct.product_type || (isFood ? 'ĂN VẶT' : 'ĐỒ UỐNG');
+      document.getElementById('modal-order-username').textContent = currentUserName;
+
+      // Dynamic toggle for Sugar and Ice options (Food/Snacks don't take sugar or ice!)
+      const sugarGroup = document.getElementById('modal-sugar-group');
+      const iceGroup = document.getElementById('modal-ice-group');
+      const userLabel = document.getElementById('modal-user-label');
+      const variantLabel = document.getElementById('modal-variant-label');
+      const submitText = document.getElementById('btn-submit-order-text');
+
+      if (isFood) {
+        sugarGroup.classList.add('hidden');
+        iceGroup.classList.add('hidden');
+        userLabel.textContent = 'Người đặt món này:';
+        variantLabel.textContent = 'Phân loại / Kích cỡ';
+        submitText.textContent = 'Xác nhận đặt món này';
+      } else {
+        sugarGroup.classList.remove('hidden');
+        iceGroup.classList.remove('hidden');
+        userLabel.textContent = 'Người uống ly này:';
+        variantLabel.textContent = 'Chọn Size / Loại Ly';
+        submitText.textContent = 'Xác nhận đặt ly này';
+      }
+
+      // Load variants list
+      const variantsContainer = document.getElementById('modal-variants-list');
+      const variants = selectedProduct.variants || [];
+      selectedVariant = variants.find(v => v.available) || variants[0];
+
+      if (!variants || variants.length === 0) {
+        variantsContainer.innerHTML = `<div class="text-xs text-slate-500 py-2">Món này hiện không có kích thước lựa chọn.</div>`;
+      } else {
+        variantsContainer.innerHTML = variants.map((v) => {
+          const isChecked = selectedVariant && String(selectedVariant.id) === String(v.id);
+          return `
+            <label class="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border ${isChecked ? 'border-emerald-500' : 'border-slate-800'} cursor-pointer hover:border-emerald-500/50 transition">
+              <div class="flex items-center gap-2">
+                <input type="radio" name="variant" value="${v.id}" ${isChecked ? 'checked' : ''} class="variant-radio text-emerald-500 focus:ring-0" />
+                <span class="text-xs font-medium text-slate-200">${v.title}</span>
+              </div>
+              <span class="font-mono text-xs font-bold text-emerald-400">${formatVND(v.price)}</span>
+            </label>
+          `;
+        }).join('');
+
+        // Wire variant changes
+        variantsContainer.querySelectorAll('.variant-radio').forEach(radio => {
+          radio.addEventListener('change', (e) => {
+            const varId = e.target.value;
+            selectedVariant = variants.find(v => String(v.id) === String(varId));
+            document.getElementById('modal-selected-price').textContent = formatVND(selectedVariant ? selectedVariant.price : 0);
+            variantsContainer.querySelectorAll('label').forEach(lbl => lbl.classList.remove('border-emerald-500'));
+            e.target.closest('label').classList.add('border-emerald-500');
+          });
+        });
+      }
+
+      // Update price display
+      document.getElementById('modal-selected-price').textContent = formatVND(selectedVariant ? selectedVariant.price : 0);
+      document.getElementById('order-note').value = '';
+
+      // Show modal
+      modal.style.display = 'flex';
+      modal.classList.remove('hidden');
+    }
+
+    // Close Modal
+    function closeModal() {
+      const modal = document.getElementById('order-modal');
+      modal.style.display = 'none';
+      modal.classList.add('hidden');
+      selectedProduct = null;
+      selectedVariant = null;
+    }
+
+    // Submit Order to Database
+    async function submitOrder(e) {
+      e.preventDefault();
+      if (!selectedProduct) return;
+
+      const userName = (safeStorage.get('party_user_name') || '').trim();
+      if (!userName) {
+        closeModal();
+        openNameModal(false);
+        return;
+      }
+
+      const isFood = isFoodItem(selectedProduct);
+      let sugar = 'Mặc định';
+      let ice = 'Không đá';
+
+      if (!isFood) {
+        const sugarRadio = document.querySelector('input[name="sugar"]:checked');
+        const iceRadio = document.querySelector('input[name="ice"]:checked');
+        sugar = sugarRadio ? sugarRadio.value : '100% đường (Chuẩn)';
+        ice = iceRadio ? iceRadio.value : 'Đá riêng (Khuyên dùng)';
+      }
+
+      const note = document.getElementById('order-note').value.trim();
+      const price = Number(selectedVariant ? selectedVariant.price : 0) || 0;
+      const varId = selectedVariant ? String(selectedVariant.id) : String(selectedProduct.id);
+      const varTitle = selectedVariant ? selectedVariant.title : 'Chuẩn';
+
+      const orderPayload = {
+        user_name: userName,
+        item_title: selectedProduct.title,
+        variant_id: varId,
+        variant_title: varTitle,
+        price: price,
+        sugar_level: sugar,
+        ice_level: ice,
+        note: note,
+        session_id: 'party-current'
+      };
+
+      const btn = document.getElementById('btn-submit-order');
+      btn.disabled = true;
+      btn.innerHTML = `Đang gửi đơn...`;
+
+      try {
+        if (window.ArtifactHub && typeof window.ArtifactHub.db === 'object') {
+          const res = await window.ArtifactHub.db.from('party_orders').insert(orderPayload);
+          if (res.error) {
+            showToast('Lỗi lưu đơn: ' + res.error, 'error');
+            return;
+          }
+          const toastIcon = getItemIcon(selectedProduct.title, isFood);
+          const toastMsg = isFood ? `Đã ghi nhận phần của ${userName}! ${toastIcon}` : `Đã ghi nhận ly của ${userName}! ${toastIcon}`;
+          showToast(toastMsg);
+          closeModal();
+          document.getElementById('order-note').value = '';
+          await loadOrders();
+        } else {
+          // Preview fallback
+          currentOrders.unshift({ id: Date.now(), ...orderPayload, created_at: new Date().toISOString() });
+          showToast(`[Xem trước] Đã đặt: ${orderPayload.item_title}`);
+          closeModal();
+          updateTallyStats();
+          renderMyOrdersBanner();
+        }
+      } catch (err) {
+        showToast('Lỗi: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span id="btn-submit-order-text">${isFood ? 'Xác nhận đặt món này' : 'Xác nhận đặt ly này'}</span>`;
+      }
+    }
+
+    // Load Orders from Database
+    async function loadOrders() {
+      try {
+        if (window.ArtifactHub && typeof window.ArtifactHub.db === 'object') {
+          const res = await window.ArtifactHub.db.from('party_orders')
+            .select(['id', 'user_name', 'item_title', 'variant_id', 'variant_title', 'price', 'sugar_level', 'ice_level', 'note', 'session_id', 'created_at'])
+            .eq('session_id', 'party-current');
+          if (res.error) {
+            console.error('Error fetching orders:', res.error);
+            return;
+          }
+          currentOrders = res.data || [];
+          updateTallyStats();
+          renderMyOrdersBanner();
+        }
+      } catch (err) {
+        console.error('Failed to load orders:', err);
+      }
+    }
+
+    // Delete Order
+    async function deleteOrder(id, customMsg) {
+      try {
+        if (window.ArtifactHub && typeof window.ArtifactHub.db === 'object') {
+          const res = await window.ArtifactHub.db.from('party_orders').delete().eq('id', id);
+          if (res.error) {
+            showToast('Lỗi xóa: ' + res.error, 'error');
+            return;
+          }
+          showToast(customMsg || 'Đã xóa ly nước khỏi danh sách');
+          await loadOrders();
+        } else {
+          currentOrders = currentOrders.filter(o => o.id !== id);
+          updateTallyStats();
+          renderMyOrdersBanner();
+          showToast(customMsg || 'Đã xóa ly nước');
+        }
+      } catch (err) {
+        showToast('Lỗi: ' + err.message, 'error');
+      }
+    }
+
+    // Update Statistics & Header Counters
+    function updateTallyStats() {
+      const totalItems = currentOrders.length;
+      let totalPrice = 0;
+      const usersSet = new Set();
+      const drinkCounts = {};
+
+      currentOrders.forEach(o => {
+        totalPrice += Number(o.price) || 0;
+        if (o.user_name) usersSet.add(o.user_name.trim());
+        const key = o.item_title;
+        drinkCounts[key] = (drinkCounts[key] || 0) + 1;
+      });
+
+      // Update Header
+      document.getElementById('header-total-items').textContent = totalItems;
+      document.getElementById('header-total-price').textContent = formatVND(totalPrice);
+      document.getElementById('badge-orders-count').textContent = totalItems;
+      document.getElementById('badge-orders-count-m').textContent = totalItems;
+
+      // Update Tab 2 KPI cards
+      document.getElementById('tally-total-items').textContent = totalItems;
+      document.getElementById('tally-total-price').textContent = formatVND(totalPrice);
+      document.getElementById('tally-total-users').textContent = usersSet.size;
+
+      let topDrink = 'Chưa có đơn';
+      let topCount = 0;
+      for (const [drink, count] of Object.entries(drinkCounts)) {
+        if (count > topCount) {
+          topDrink = drink;
+          topCount = count;
+        }
+      }
+      document.getElementById('tally-top-drink').textContent = topDrink;
+      document.getElementById('tally-top-count').textContent = topCount ? `${topCount} ly` : '0 ly';
+    }
+
+    // Render Tab 2 (Orders & Prep Checklist)
+    function renderOrdersView() {
+      updateTallyStats();
+      const checklistContainer = document.getElementById('prep-checklist');
+      const tbody = document.getElementById('orders-tbody');
+
+      if (currentOrders.length === 0) {
+        checklistContainer.innerHTML = `<div class="text-xs text-slate-500 py-4 text-center">Chưa có ai đặt ly nào. Hãy gửi link cho team để bắt đầu chọn món!</div>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-500">Danh sách đơn tiệc đang trống.</td></tr>`;
+        return;
+      }
+
+      // Group identical items for store prep checklist
+      const prepGroups = {};
+      currentOrders.forEach(o => {
+        const isFood = (o.sugar_level === 'Mặc định' || o.sugar_level === '-' || isFoodItem({ product_type: '', title: o.item_title }));
+        const key = isFood
+          ? `${o.item_title} | ${o.variant_title} | Food`
+          : `${o.item_title} | ${o.variant_title} | ${o.sugar_level} | ${o.ice_level}`;
+
+        if (!prepGroups[key]) {
+          prepGroups[key] = {
+            item_title: o.item_title,
+            variant_title: o.variant_title,
+            is_food: isFood,
+            sugar: o.sugar_level,
+            ice: o.ice_level,
+            price: o.price,
+            count: 0,
+            people: []
+          };
+        }
+        prepGroups[key].count += 1;
+        prepGroups[key].people.push(o.user_name);
+      });
+
+      checklistContainer.innerHTML = Object.values(prepGroups).map(g => {
+        const icon = getItemIcon(g.item_title, g.is_food);
+        return `
+        <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 font-bold font-mono text-xs border border-emerald-500/30">
+                ${g.count}x
+              </span>
+              <span class="text-base">${icon}</span>
+              <span class="font-bold text-white text-xs">${g.item_title}</span>
+              <span class="text-[11px] text-slate-400 font-mono">(${g.variant_title})</span>
+            </div>
+            ${!g.is_food ? `
+              <div class="flex items-center gap-2 text-[11px] text-slate-400 mt-1">
+                <span>Độ ngọt: <strong class="text-purple-300">${g.sugar}</strong></span>
+                <span>•</span>
+                <span>Đá: <strong class="text-cyan-300">${g.ice}</strong></span>
+              </div>
+            ` : `
+              <div class="text-[11px] text-amber-300/80 mt-1 font-medium">
+                Món ăn vặt / Tráng miệng
+              </div>
+            `}
+            <div class="text-[11px] text-slate-500 mt-0.5">
+              Người dùng: ${g.people.join(', ')}
+            </div>
+          </div>
+          <div class="text-right font-mono text-emerald-400 font-bold text-xs shrink-0">
+            ${formatVND(g.price * g.count)}
+          </div>
+        </div>
+      `;}).join('');
+
+      // Individual table rows
+      tbody.innerHTML = currentOrders.map(o => {
+        const isFood = (o.sugar_level === 'Mặc định' || o.sugar_level === '-' || isFoodItem({ product_type: '', title: o.item_title }));
+        const icon = getItemIcon(o.item_title, isFood);
+        return `
+        <tr class="hover:bg-slate-800/40 transition">
+          <td class="py-3 px-4 font-bold text-white flex items-center gap-2">
+            <span class="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center text-xs font-bold shrink-0">
+              ${(o.user_name || '?').charAt(0).toUpperCase()}
+            </span>
+            ${o.user_name}
+          </td>
+          <td class="py-3 px-4 text-slate-200 font-semibold flex items-center gap-1.5">
+            <span>${icon}</span>
+            <span>${o.item_title}</span>
+          </td>
+          <td class="py-3 px-3 text-slate-400 font-mono text-[11px]">${o.variant_title}</td>
+          <td class="py-3 px-3 text-purple-300 font-medium">${!isFood ? o.sugar_level : '<span class="text-slate-600">-</span>'}</td>
+          <td class="py-3 px-3 text-cyan-300 font-medium">${!isFood ? o.ice_level : '<span class="text-slate-600">-</span>'}</td>
+          <td class="py-3 px-4 text-slate-400 italic">${o.note || '-'}</td>
+          <td class="py-3 px-4 text-right font-mono font-bold text-emerald-400">${formatVND(o.price)}</td>
+          <td class="py-3 px-4 text-center">
+            <button type="button" class="btn-del-order text-slate-500 hover:text-rose-400 p-1 rounded hover:bg-rose-500/10 transition" data-id="${o.id}" title="Xóa món này">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </button>
+          </td>
+        </tr>
+      `;}).join('');
+
+      // Wire delete buttons
+      tbody.querySelectorAll('.btn-del-order').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const id = Number(btn.getAttribute('data-id'));
+          deleteOrder(id);
+        });
+      });
+    }
+
+    // Generate Cart Injector Script Payload
+    function generateCartScript() {
+      const itemsPayload = currentOrders.map(o => {
+        const isFood = (o.sugar_level === 'Mặc định' || o.sugar_level === '-' || isFoodItem({ product_type: '', title: o.item_title }));
+        return {
+          variant_id: Number(o.variant_id) || o.variant_id,
+          user_name: o.user_name,
+          is_food: isFood,
+          sugar_level: o.sugar_level,
+          ice_level: o.ice_level,
+          note: o.note || ''
+        };
+      });
+
+      const scriptCode = `(async function(){
+  const items = ${JSON.stringify(itemsPayload)};
+  if (!items.length) { alert('Danh sách đặt món đang trống!'); return; }
+  
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:20px;right:20px;z-index:999999;background:#0f172a;color:#fff;padding:16px 20px;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,0.5);font-family:sans-serif;font-size:13px;border:1px solid #334155;max-width:340px;';
+  overlay.innerHTML = '<div style="font-weight:bold;margin-bottom:6px;display:flex;align-items:center;gap:6px;"><span>🍹</span> Party Juice Hub Auto-Cart</div><div id="p-status">Đang nạp món vào giỏ hàng...</div><div style="background:#1e293b;height:6px;border-radius:3px;margin-top:10px;overflow:hidden;"><div id="p-bar" style="background:#10b981;height:100%;width:0%;transition:width 0.2s;"></div></div>';
+  document.body.appendChild(overlay);
+
+  let done = 0;
+  for (const item of items) {
+    try {
+      // Format line note to exact pattern: "[Độ ngọt][Đá][ (Ghi chú)] | [Tên]"
+      let noteText = '';
+      if (!item.is_food) {
+        noteText = (item.sugar_level || '') + (item.ice_level || '');
+        if (item.note) {
+          noteText += ' (' + item.note + ')';
+        }
+        noteText += ' | ' + item.user_name;
+      } else {
+        if (item.note) {
+          noteText = item.note + ' | ' + item.user_name;
+        } else {
+          noteText = item.user_name;
+        }
+      }
+
+      await fetch('/cart/add.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: item.variant_id,
+          quantity: 1,
+          properties: {
+            'Ghi chú': noteText
+          }
+        })
+      });
+      done++;
+      document.getElementById('p-status').textContent = 'Đã nạp ' + done + '/' + items.length + ' món...';
+      document.getElementById('p-bar').style.width = ((done/items.length)*100) + '%';
+    } catch (e) {
+      console.error('Lỗi nạp món:', e);
+    }
+  }
+  document.getElementById('p-status').textContent = 'Xong toàn bộ ' + items.length + ' món! Đang mở giỏ hàng...';
+  setTimeout(() => { window.location.href = '/cart'; }, 800);
+})();`;
+
+      return scriptCode;
+    }
+
+    // Render Tab 3 (Admin & Cart Injector)
+    function renderAdminView() {
+      const script = generateCartScript();
+      document.getElementById('console-script-box').value = script;
+
+      const bookmarkletLink = document.getElementById('bookmarklet-link');
+      bookmarkletLink.setAttribute('href', 'javascript:' + encodeURIComponent(script));
+
+      let zaloText = `Chào shop Trái Cây Mỗi Ngày, công ty mình đặt đơn tiệc hôm nay:\n`;
+      zaloText += `Tổng số lượng: ${currentOrders.length} phần/ly\n\n`;
+      zaloText += `CHI TIẾT MÓN:\n`;
+
+      const prepGroups = {};
+      currentOrders.forEach(o => {
+        const isFood = (o.sugar_level === 'Mặc định' || o.sugar_level === '-' || isFoodItem({ product_type: '', title: o.item_title }));
+        const key = isFood
+          ? `${o.item_title} (${o.variant_title})`
+          : `${o.item_title} (${o.variant_title}) | ${o.sugar_level} | ${o.ice_level}`;
+        if (!prepGroups[key]) prepGroups[key] = { key, is_food: isFood, count: 0, people: [] };
+        prepGroups[key].count += 1;
+        prepGroups[key].people.push(o.user_name);
+      });
+
+      let idx = 1;
+      for (const g of Object.values(prepGroups)) {
+        const desc = g.is_food
+          ? `${g.item_title} (${g.variant_title})`
+          : `${g.item_title} (${g.variant_title}) - ${(g.sugar || '')}${(g.ice || '')}`;
+        zaloText += `${idx}. ${g.count}x ${desc} | ${g.people.join(', ')}\n`;
+        idx++;
+      }
+
+      let totalP = 0;
+      currentOrders.forEach(o => totalP += Number(o.price) || 0);
+      zaloText += `\nTổng tiền tạm tính: ${formatVND(totalP)}\n`;
+      zaloText += `Nhờ shop dán tem tên từng người lên ly/hộp giúp công ty mình nhé. Cảm ơn shop!`;
+
+      document.getElementById('zalo-message-box').value = zaloText;
+    }
+
+    // Setup Event Listeners
+    function setupEventListeners() {
+      // Event Delegation on Product Grid: Click anywhere on "Chọn ly này"
+      document.getElementById('product-grid').addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-open-modal');
+        if (!btn) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const pId = btn.getAttribute('data-id');
+        openOrderModal(pId);
+      });
+
+      // Name Modal Form
+      document.getElementById('name-form').addEventListener('submit', handleSaveName);
+
+      // Name Modal Close & Cancel Buttons
+      document.getElementById('btn-close-name-modal').addEventListener('click', closeNameModal);
+      document.getElementById('btn-cancel-name-modal').addEventListener('click', closeNameModal);
+      document.getElementById('name-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'name-modal' && (safeStorage.get('party_user_name') || '').trim()) {
+          closeNameModal();
+        }
+      });
+
+      // Edit Name button in Header
+      document.getElementById('btn-edit-global-name').addEventListener('click', () => {
+        openNameModal(true);
+      });
+
+      // Modal change user button
+      document.getElementById('btn-modal-change-user').addEventListener('click', () => {
+        closeModal();
+        openNameModal(true);
+      });
+
+      // Tab Navigation
+      document.querySelectorAll('.nav-tab, .nav-tab-m').forEach(btn => {
+        btn.addEventListener('click', () => {
+          setTab(btn.getAttribute('data-tab'));
+        });
+      });
+
+      document.getElementById('header-cart-summary').addEventListener('click', () => {
+        setTab('orders');
+      });
+
+      // Category filter pills
+      document.querySelectorAll('.cat-pill').forEach(btn => {
+        btn.addEventListener('click', () => {
+          activeCategory = btn.getAttribute('data-cat');
+          document.querySelectorAll('.cat-pill').forEach(p => {
+            p.className = 'cat-pill px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:bg-slate-800 transition whitespace-nowrap';
+          });
+          btn.className = 'cat-pill px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 text-white shadow transition whitespace-nowrap';
+          renderCatalog();
+        });
+      });
+
+      // Search input
+      document.getElementById('search-input').addEventListener('input', renderCatalog);
+
+      // Refresh Menu button
+      document.getElementById('btn-sync-menu').addEventListener('click', syncMenu);
+
+      // Modal close events
+      document.getElementById('btn-close-modal').addEventListener('click', closeModal);
+      document.getElementById('order-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'order-modal') closeModal();
+      });
+
+      // Order form submit
+      document.getElementById('order-form').addEventListener('submit', submitOrder);
+
+      // Refresh orders button
+      document.getElementById('btn-refresh-orders').addEventListener('click', loadOrders);
+
+      // Copy Prep Summary Checklist
+      document.getElementById('btn-copy-prep-summary').addEventListener('click', () => {
+        const text = document.getElementById('zalo-message-box').value;
+        copyText(text, 'Đã sao chép tóm tắt pha chế vào bộ nhớ tạm!');
+      });
+
+      // Copy Console Script
+      document.getElementById('btn-copy-console-script').addEventListener('click', () => {
+        const script = document.getElementById('console-script-box').value;
+        copyText(script, 'Đã sao chép Script Console F12!');
+      });
+
+      // Copy Zalo Text
+      document.getElementById('btn-copy-zalo').addEventListener('click', () => {
+        const text = document.getElementById('zalo-message-box').value;
+        copyText(text, 'Đã sao chép nội dung tin nhắn Zalo!');
+      });
+
+      // Reset Party Confirmation Modal Handlers
+      function openResetModal() {
+        const modal = document.getElementById('reset-modal');
+        modal.style.display = 'flex';
+        modal.classList.remove('hidden');
+      }
+
+      function closeResetModal() {
+        const modal = document.getElementById('reset-modal');
+        modal.style.display = 'none';
+        modal.classList.add('hidden');
+      }
+
+      document.getElementById('btn-clear-session').addEventListener('click', openResetModal);
+      document.getElementById('btn-cancel-reset').addEventListener('click', closeResetModal);
+      document.getElementById('reset-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'reset-modal') closeResetModal();
+      });
+
+      document.getElementById('btn-confirm-reset').addEventListener('click', async () => {
+        const btn = document.getElementById('btn-confirm-reset');
+        btn.disabled = true;
+        btn.textContent = 'Đang xóa...';
+
+        try {
+          if (window.ArtifactHub && typeof window.ArtifactHub.db === 'object') {
+            // Delete all orders in current session
+            const res = await window.ArtifactHub.db.from('party_orders').delete().eq('session_id', 'party-current');
+            if (res.error) {
+              // Fallback row-by-row
+              for (const o of currentOrders) {
+                await window.ArtifactHub.db.from('party_orders').delete().eq('id', o.id);
+              }
+            }
+            currentOrders = [];
+            await loadOrders();
+            closeResetModal();
+            showToast('Đã xóa toàn bộ đơn & làm mới phiên tiệc! 🎉');
+          } else {
+            currentOrders = [];
+            updateTallyStats();
+            renderMyOrdersBanner();
+            closeResetModal();
+            showToast('Đã làm mới phiên tiệc!');
+          }
+        } catch (err) {
+          showToast('Lỗi khi xóa: ' + err.message, 'error');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Xóa toàn bộ & Reset';
+        }
+      });
+    }
+
+    // Standalone / GitHub Pages Controller
+    function initStandaloneMode() {
+      const btnConfig = document.getElementById('btn-gsheet-config');
+      const modalConfig = document.getElementById('modal-gsheet-config');
+      const btnClose = document.getElementById('btn-close-gsheet-config');
+      const btnSave = document.getElementById('btn-save-gsheet-url');
+      const inputUrl = document.getElementById('input-gsheet-url');
+
+      if (btnConfig) {
+        btnConfig.classList.remove('hidden');
+        btnConfig.classList.add('flex');
+        btnConfig.addEventListener('click', () => {
+          if (inputUrl && window.ArtifactHub.getWebhookUrl) {
+            inputUrl.value = window.ArtifactHub.getWebhookUrl() || '';
+          }
+          if (modalConfig) {
+            modalConfig.classList.remove('hidden');
+            modalConfig.classList.add('flex');
+          }
+        });
+      }
+
+      if (btnClose && modalConfig) {
+        btnClose.addEventListener('click', () => {
+          modalConfig.classList.remove('flex');
+          modalConfig.classList.add('hidden');
+        });
+      }
+
+      if (btnSave) {
+        btnSave.addEventListener('click', async () => {
+          const val = (inputUrl ? inputUrl.value : '').trim();
+          if (window.ArtifactHub.setWebhookUrl) {
+            window.ArtifactHub.setWebhookUrl(val);
+          }
+          if (modalConfig) {
+            modalConfig.classList.remove('flex');
+            modalConfig.classList.add('hidden');
+          }
+          if (val) {
+            showToast('Đang kết nối Google Sheet...', 'info');
+            await loadOrders();
+            showToast('Đã kết nối và đồng bộ với Google Sheet! 📊');
+          } else {
+            showToast('Đã gỡ Google Sheet Webhook.');
+          }
+        });
+      }
+
+      // If user hasn't configured Webhook URL yet in standalone mode, auto-prompt after welcome modal
+      if (window.ArtifactHub.getWebhookUrl && !window.ArtifactHub.getWebhookUrl()) {
+        setTimeout(() => {
+          const nameModal = document.getElementById('modal-user-name');
+          const isNameModalOpen = nameModal && !nameModal.classList.contains('hidden');
+          if (!isNameModalOpen && modalConfig) {
+            modalConfig.classList.remove('hidden');
+            modalConfig.classList.add('flex');
+          }
+        }, 1200);
+      }
+    }
+
+    // Startup Initialization
+    window.addEventListener('DOMContentLoaded', async () => {
+      setupEventListeners();
+
+      // Check if running in standalone mode (e.g. GitHub Pages)
+      if (window.ArtifactHub && window.ArtifactHub.isStandalone) {
+        initStandaloneMode();
+      }
+
+      // 1. Load user name from persistent browser storage first
+      await safeStorage.init();
+      updateHeaderUserName();
+
+      // 2. Only if user truly hasn't set their name, prompt with welcome modal
+      const savedName = (safeStorage.get('party_user_name') || '').trim();
+      if (!savedName) {
+        openNameModal(false);
+      }
+
+      await Promise.all([syncMenu(), loadOrders()]);
+    });
+  </script>
+</body>
+</html>

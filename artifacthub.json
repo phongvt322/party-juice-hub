@@ -1,0 +1,28 @@
+{
+  "name": "Party Juice Hub (Trái Cây Mỗi Ngày)",
+  "description": "Office party drink order organizer with live traicaymoingay.com catalog and 1-click cart injector.",
+  "connection": "default",
+  "entry": "index.html",
+  "database": {
+    "tables": {
+      "party_orders": {
+        "schema": "public",
+        "primary_key": "id",
+        "operations": ["select", "insert", "update", "delete"],
+        "columns": [
+          "id",
+          "user_name",
+          "item_title",
+          "variant_id",
+          "variant_title",
+          "price",
+          "sugar_level",
+          "ice_level",
+          "note",
+          "session_id",
+          "created_at"
+        ]
+      }
+    }
+  }
+}
