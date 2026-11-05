@@ -41,15 +41,7 @@
       // Configuration: If publishing to GitHub Pages, you can either:
       // 1. Paste your Webhook URL here as DEFAULT_GSHEET_WEBHOOK_URL, or
       // 2. Set it interactively via the "📊 Sheet" button in the app (stored in browser localStorage)
-      window.DEFAULT_GSHEET_WEBHOOK_URL = "";
-
-      // Cleanup any legacy broken webhook URL
-      try {
-        const stored = localStorage.getItem('party_gsheet_webhook_url');
-        if (stored && stored.includes('AKfycbxOzZ2rY470Z7YLPJwq0WmpXGHcJk-rxzjwYoE2OUs1uECatVVWE7ZO3vbVbm1tl58')) {
-          localStorage.removeItem('party_gsheet_webhook_url');
-        }
-      } catch (e) {}
+      window.DEFAULT_GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxOzZ2rY470Z7YLPJwq0WmpXGHcJk-rxzjwYoE2OUs1uECatVVWE7ZO3vbVbm1tl58/exec";
 
       // If running inside ArtifactHub, window.ArtifactHub is already injected by the host
       if (typeof window.ArtifactHub !== 'undefined' && !window.ArtifactHub.isStandalone) {
