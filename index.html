@@ -41,7 +41,15 @@
       // Configuration: If publishing to GitHub Pages, you can either:
       // 1. Paste your Webhook URL here as DEFAULT_GSHEET_WEBHOOK_URL, or
       // 2. Set it interactively via the "📊 Sheet" button in the app (stored in browser localStorage)
-      window.DEFAULT_GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxOzZ2rY470Z7YLPJwq0WmpXGHcJk-rxzjwYoE2OUs1uECatVVWE7ZO3vbVbm1tl58/exec";
+      window.DEFAULT_GSHEET_WEBHOOK_URL = "";
+
+      // Cleanup any legacy broken webhook URL
+      try {
+        const stored = localStorage.getItem('party_gsheet_webhook_url');
+        if (stored && stored.includes('AKfycbxOzZ2rY470Z7YLPJwq0WmpXGHcJk-rxzjwYoE2OUs1uECatVVWE7ZO3vbVbm1tl58')) {
+          localStorage.removeItem('party_gsheet_webhook_url');
+        }
+      } catch (e) {}
 
       // If running inside ArtifactHub, window.ArtifactHub is already injected by the host
       if (typeof window.ArtifactHub !== 'undefined' && !window.ArtifactHub.isStandalone) {
@@ -49,14 +57,29 @@
       }
 
       function getWebhookUrl() {
-        if (window.DEFAULT_GSHEET_WEBHOOK_URL && window.DEFAULT_GSHEET_WEBHOOK_URL.startsWith('http')) {
+        try {
+          const userUrl = localStorage.getItem('party_gsheet_webhook_url');
+          if (userUrl && userUrl.trim().startsWith('http')) return userUrl.trim();
+        } catch (e) {}
+        if (window.DEFAULT_GSHEET_WEBHOOK_URL && window.DEFAULT_GSHEET_WEBHOOK_URL.trim().startsWith('http')) {
           return window.DEFAULT_GSHEET_WEBHOOK_URL.trim();
         }
+        return '';
+      }
+
+      function getLocalTable(tableName) {
         try {
-          return localStorage.getItem('party_gsheet_webhook_url') || '';
+          const raw = localStorage.getItem('party_db_' + tableName);
+          return raw ? JSON.parse(raw) : [];
         } catch (e) {
-          return '';
+          return [];
         }
+      }
+
+      function setLocalTable(tableName, rows) {
+        try {
+          localStorage.setItem('party_db_' + tableName, JSON.stringify(rows));
+        } catch (e) {}
       }
 
       class StandaloneQuery {
@@ -120,142 +143,183 @@
 
         async _execute() {
           const webhookUrl = getWebhookUrl();
-          if (!webhookUrl) {
-            if (this.operation === 'select') {
+
+          if (this.operation === 'select') {
+            let rows = getLocalTable(this.tableName);
+
+            // If webhook configured, try remote fetch and update local cache
+            if (webhookUrl) {
               try {
-                const raw = localStorage.getItem('party_local_' + this.tableName);
-                let rows = raw ? JSON.parse(raw) : [];
-                if (this.filters.length > 0) {
-                  rows = rows.filter(r => this.filters.every(f => String(r[f.column] ?? '').trim().toLowerCase() === String(f.value ?? '').trim().toLowerCase()));
+                const url = new URL(webhookUrl);
+                url.searchParams.set('action', 'select');
+                url.searchParams.set('operation', 'select');
+                url.searchParams.set('table', this.tableName);
+                url.searchParams.set('sheet', this.tableName);
+                const res = await fetch(url.toString(), { method: 'GET', mode: 'cors' });
+                if (res.ok) {
+                  const json = await res.json();
+                  if (json && json.ok && Array.isArray(json.data) && json.data.length > 0) {
+                    rows = json.data;
+                    setLocalTable(this.tableName, rows);
+                  }
                 }
-                return { data: rows, error: null };
               } catch (e) {
-                return { data: [], error: 'Vui lòng cài đặt Google Sheet Webhook URL' };
+                console.warn('Webhook select failed, using local storage:', e.message);
               }
             }
-            return { data: null, error: 'Chưa cấu hình Google Sheet Webhook URL' };
+
+            // Apply filters
+            if (this.filters.length > 0) {
+              rows = rows.filter(r => {
+                return this.filters.every(f => {
+                  const cellVal = r[f.column];
+                  if (f.op === 'neq') {
+                    return String(cellVal !== undefined && cellVal !== null ? cellVal : '').trim().toLowerCase() !==
+                           String(f.value !== undefined && f.value !== null ? f.value : '').trim().toLowerCase();
+                  }
+                  return String(cellVal !== undefined && cellVal !== null ? cellVal : '').trim().toLowerCase() ===
+                         String(f.value !== undefined && f.value !== null ? f.value : '').trim().toLowerCase();
+                });
+              });
+            }
+
+            // Apply columns projection
+            if (Array.isArray(this.columns) && this.columns.length > 0 && this.columns[0] !== '*') {
+              rows = rows.map(r => {
+                const proj = {};
+                this.columns.forEach(c => { if (c in r || c === 'id') proj[c] = r[c]; });
+                if ('id' in r && !('id' in proj)) proj.id = r.id;
+                return proj;
+              });
+            }
+
+            if (typeof this.limitCount === 'number') {
+              rows = rows.slice(0, this.limitCount);
+            }
+
+            return { data: rows, error: null };
           }
 
-          try {
-            if (this.operation === 'select') {
-              const url = new URL(webhookUrl);
-              url.searchParams.set('action', 'select');
-              url.searchParams.set('operation', 'select');
-              url.searchParams.set('table', this.tableName);
-              url.searchParams.set('sheet', this.tableName);
-              const res = await fetch(url.toString(), { method: 'GET', mode: 'cors' });
-              if (!res.ok) throw new Error('HTTP ' + res.status);
-              const json = await res.json();
-              if (!json.ok) throw new Error(json.error || 'Lỗi đọc Google Sheet');
-              let rows = json.data || [];
-              if (this.filters.length > 0) {
-                rows = rows.filter(r => {
-                  return this.filters.every(f => {
-                    const cellVal = r[f.column];
-                    if (f.op === 'neq') {
-                      return String(cellVal !== undefined && cellVal !== null ? cellVal : '').trim().toLowerCase() !==
-                             String(f.value !== undefined && f.value !== null ? f.value : '').trim().toLowerCase();
-                    }
-                    return String(cellVal !== undefined && cellVal !== null ? cellVal : '').trim().toLowerCase() ===
-                           String(f.value !== undefined && f.value !== null ? f.value : '').trim().toLowerCase();
-                  });
-                });
-              }
-              if (Array.isArray(this.columns) && this.columns.length > 0 && this.columns[0] !== '*') {
-                rows = rows.map(r => {
-                  const proj = {};
-                  this.columns.forEach(c => { if (c in r || c === 'id') proj[c] = r[c]; });
-                  if ('id' in r && !('id' in proj)) proj.id = r.id;
-                  return proj;
-                });
-              }
-              if (typeof this.limitCount === 'number') {
-                rows = rows.slice(0, this.limitCount);
-              }
+          if (this.operation === 'insert') {
+            let rows = getLocalTable(this.tableName);
+            const rawItems = Array.isArray(this.values) ? this.values : [this.values];
+            const inserted = rawItems.map(item => ({
+              id: item.id || Date.now() + Math.floor(Math.random() * 1000),
+              created_at: item.created_at || new Date().toISOString(),
+              ...item
+            }));
+
+            // Prepend new orders to local rows and save
+            rows = [...inserted, ...rows];
+            setLocalTable(this.tableName, rows);
+
+            // If webhook configured, try background sync
+            if (webhookUrl) {
               try {
-                localStorage.setItem('party_local_' + this.tableName, JSON.stringify(json.data || []));
-              } catch (e) {}
-              return { data: rows, error: null };
-            } else if (this.operation === 'insert') {
-              const payload = {
-                action: 'insert',
-                operation: 'insert',
-                table: this.tableName,
-                sheet: this.tableName,
-                data: this.values,
-                values: this.values
-              };
-              const res = await fetch(webhookUrl, {
-                method: 'POST',
-                mode: 'cors',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-              });
-              if (!res.ok) throw new Error('HTTP ' + res.status);
-              const json = await res.json();
-              if (!json.ok) throw new Error(json.error || 'Lỗi ghi vào Google Sheet');
-              return { data: json.data || (Array.isArray(this.values) ? this.values : [this.values]), error: null };
-            } else if (this.operation === 'update') {
-              const whereMap = {};
-              this.filters.forEach(f => { whereMap[f.column] = f.value; });
-              const payload = {
-                action: 'update',
-                operation: 'update',
-                table: this.tableName,
-                sheet: this.tableName,
-                data: this.values,
-                values: this.values,
-                where: whereMap,
-                filters: this.filters
-              };
-              const res = await fetch(webhookUrl, {
-                method: 'POST',
-                mode: 'cors',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-              });
-              if (!res.ok) throw new Error('HTTP ' + res.status);
-              const json = await res.json();
-              if (!json.ok) throw new Error(json.error || 'Lỗi cập nhật Google Sheet');
-              return { data: json.data || [this.values], error: null };
-            } else if (this.operation === 'delete') {
-              const whereMap = {};
-              this.filters.forEach(f => { whereMap[f.column] = f.value; });
-              const payload = {
-                action: 'delete',
-                operation: 'delete',
-                table: this.tableName,
-                sheet: this.tableName,
-                where: whereMap,
-                filters: this.filters
-              };
-              const res = await fetch(webhookUrl, {
-                method: 'POST',
-                mode: 'cors',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payload)
-              });
-              if (!res.ok) throw new Error('HTTP ' + res.status);
-              const json = await res.json();
-              if (!json.ok) throw new Error(json.error || 'Lỗi xóa trên Google Sheet');
-              return { data: json.data, error: null };
+                const payload = {
+                  action: 'insert',
+                  operation: 'insert',
+                  table: this.tableName,
+                  sheet: this.tableName,
+                  data: inserted.length === 1 ? inserted[0] : inserted,
+                  values: inserted.length === 1 ? inserted[0] : inserted
+                };
+                fetch(webhookUrl, {
+                  method: 'POST',
+                  mode: 'cors',
+                  headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                  body: JSON.stringify(payload)
+                }).catch(err => console.warn('Background webhook insert failed:', err));
+              } catch (e) {
+                console.warn('Webhook insert error:', e);
+              }
             }
-            return { data: null, error: 'Thao tác không hỗ trợ' };
-          } catch (err) {
-            if (this.operation === 'select') {
-              try {
-                const raw = localStorage.getItem('party_local_' + this.tableName);
-                if (raw) {
-                  let rows = JSON.parse(raw);
-                  if (this.filters.length > 0) {
-                    rows = rows.filter(r => this.filters.every(f => String(r[f.column] ?? '').trim().toLowerCase() === String(f.value ?? '').trim().toLowerCase()));
-                  }
-                  return { data: rows, error: null };
-                }
-              } catch (e) {}
-            }
-            return { data: this.operation === 'select' ? [] : null, error: err.message };
+
+            return { data: inserted, error: null };
           }
+
+          if (this.operation === 'update') {
+            let rows = getLocalTable(this.tableName);
+            rows = rows.map(r => {
+              const match = this.filters.length > 0 && this.filters.every(f => {
+                return String(r[f.column] ?? '').trim().toLowerCase() === String(f.value ?? '').trim().toLowerCase();
+              });
+              if (match) {
+                return { ...r, ...this.values };
+              }
+              return r;
+            });
+            setLocalTable(this.tableName, rows);
+
+            if (webhookUrl) {
+              try {
+                const whereMap = {};
+                this.filters.forEach(f => { whereMap[f.column] = f.value; });
+                fetch(webhookUrl, {
+                  method: 'POST',
+                  mode: 'cors',
+                  headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                  body: JSON.stringify({
+                    action: 'update',
+                    operation: 'update',
+                    table: this.tableName,
+                    sheet: this.tableName,
+                    data: this.values,
+                    values: this.values,
+                    where: whereMap,
+                    filters: this.filters
+                  })
+                }).catch(err => console.warn('Background webhook update failed:', err));
+              } catch (e) {}
+            }
+
+            return { data: [this.values], error: null };
+          }
+
+          if (this.operation === 'delete') {
+            let rows = getLocalTable(this.tableName);
+            let deleted = [];
+            if (this.filters.length > 0) {
+              deleted = rows.filter(r => {
+                return this.filters.every(f => {
+                  return String(r[f.column] ?? '').trim().toLowerCase() === String(f.value ?? '').trim().toLowerCase();
+                });
+              });
+              rows = rows.filter(r => {
+                return !this.filters.every(f => {
+                  return String(r[f.column] ?? '').trim().toLowerCase() === String(f.value ?? '').trim().toLowerCase();
+                });
+              });
+            } else {
+              deleted = [...rows];
+              rows = [];
+            }
+            setLocalTable(this.tableName, rows);
+
+            if (webhookUrl) {
+              try {
+                const whereMap = {};
+                this.filters.forEach(f => { whereMap[f.column] = f.value; });
+                fetch(webhookUrl, {
+                  method: 'POST',
+                  mode: 'cors',
+                  headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                  body: JSON.stringify({
+                    action: 'delete',
+                    operation: 'delete',
+                    table: this.tableName,
+                    sheet: this.tableName,
+                    where: whereMap,
+                    filters: this.filters
+                  })
+                }).catch(err => console.warn('Background webhook delete failed:', err));
+              } catch (e) {}
+            }
+
+            return { data: deleted, error: null };
+          }
+
+          return { data: null, error: 'Thao tác không hỗ trợ' };
         }
 
         then(resolve, reject) {
@@ -1475,6 +1539,8 @@
           currentOrders = res.data || [];
           updateTallyStats();
           renderMyOrdersBanner();
+          renderOrdersView();
+          renderAdminView();
         }
       } catch (err) {
         console.error('Failed to load orders:', err);
@@ -1950,18 +2016,6 @@
             showToast('Đã gỡ Google Sheet Webhook.');
           }
         });
-      }
-
-      // If user hasn't configured Webhook URL yet in standalone mode, auto-prompt after welcome modal
-      if (window.ArtifactHub.getWebhookUrl && !window.ArtifactHub.getWebhookUrl()) {
-        setTimeout(() => {
-          const nameModal = document.getElementById('modal-user-name');
-          const isNameModalOpen = nameModal && !nameModal.classList.contains('hidden');
-          if (!isNameModalOpen && modalConfig) {
-            modalConfig.classList.remove('hidden');
-            modalConfig.classList.add('flex');
-          }
-        }, 1200);
       }
     }
 
