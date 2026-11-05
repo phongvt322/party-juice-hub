@@ -38,10 +38,13 @@
   <!-- Standalone GitHub Pages & Direct Google Sheets Adapter -->
   <script>
     (function() {
-      // Configuration: If publishing to GitHub Pages, you can either:
-      // 1. Paste your Webhook URL here as DEFAULT_GSHEET_WEBHOOK_URL, or
-      // 2. Set it interactively via the "📊 Sheet" button in the app (stored in browser localStorage)
-      window.DEFAULT_GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxOzZ2rY470Z7YLPJwq0WmpXGHcJk-rxzjwYoE2OUs1uECatVVWE7ZO3vbVbm1tl58/exec";
+      // Fixed Google Apps Script backend URL (locked, cannot be changed)
+      const FIXED_GSHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbwnHiwSiJadIlhWBQuhWUzUvag9YepDS6qsIXyJhbGP41z9jComkPR1CvPsRvm0n_Fz/exec";
+
+      // Purge any legacy webhook overrides
+      try {
+        localStorage.removeItem('party_gsheet_webhook_url');
+      } catch (e) {}
 
       // If running inside ArtifactHub, window.ArtifactHub is already injected by the host
       if (typeof window.ArtifactHub !== 'undefined' && !window.ArtifactHub.isStandalone) {
@@ -49,14 +52,7 @@
       }
 
       function getWebhookUrl() {
-        try {
-          const userUrl = localStorage.getItem('party_gsheet_webhook_url');
-          if (userUrl && userUrl.trim().startsWith('http')) return userUrl.trim();
-        } catch (e) {}
-        if (window.DEFAULT_GSHEET_WEBHOOK_URL && window.DEFAULT_GSHEET_WEBHOOK_URL.trim().startsWith('http')) {
-          return window.DEFAULT_GSHEET_WEBHOOK_URL.trim();
-        }
-        return '';
+        return FIXED_GSHEET_WEBHOOK_URL;
       }
 
       function getLocalTable(tableName) {
@@ -326,11 +322,8 @@
       window.ArtifactHub = {
         isStandalone: true,
         getWebhookUrl: getWebhookUrl,
-        setWebhookUrl: function(url) {
-          try {
-            if (url) localStorage.setItem('party_gsheet_webhook_url', url.trim());
-            else localStorage.removeItem('party_gsheet_webhook_url');
-          } catch (e) {}
+        setWebhookUrl: function() {
+          // Locked: Backend URL is fixed and cannot be changed
         },
         storage: {
           get: async function(key) {
@@ -393,12 +386,6 @@
       <!-- Right: User Name Chip & Cart Summary -->
       <div class="flex items-center gap-2.5">
         
-        <!-- Standalone Google Sheet Settings Button (visible when running standalone on GitHub Pages) -->
-        <button id="btn-gsheet-config" type="button" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/80 border border-emerald-500/30 text-emerald-400 hover:border-emerald-400 text-xs shadow-inner transition" title="Cài đặt Google Sheet Webhook">
-          <span>📊</span>
-          <span class="hidden sm:inline font-semibold">Sheet</span>
-        </button>
-
         <!-- User Identity Chip (Visualizes Name at Top) -->
         <div id="user-header-chip" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs shadow-inner">
           <span class="text-slate-400">👤</span>
@@ -873,29 +860,6 @@
     </div>
   </div>
 
-  <!-- Google Sheet Configuration Modal (for Standalone GitHub Pages mode) -->
-  <div id="modal-gsheet-config" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
-      <div class="flex items-center justify-between">
-        <h3 class="text-base font-bold text-white flex items-center gap-2">
-          <span>📊</span> Cài đặt Google Sheet Webhook
-        </h3>
-        <button id="btn-close-gsheet-config" class="text-slate-400 hover:text-slate-200 text-xl font-bold p-1 leading-none">&times;</button>
-      </div>
-      <p class="text-xs text-slate-300 leading-relaxed">
-        Khi chạy trực tiếp trên <strong>GitHub Pages</strong>, hãy dán URL Web App của Google Apps Script bên dưới để website tự động đồng bộ và lưu đơn hàng vào Google Sheet của bạn.
-      </p>
-      <div>
-        <label class="block text-xs font-semibold text-slate-400 mb-1">Google Apps Script Web App URL</label>
-        <input id="input-gsheet-url" type="url" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono" />
-      </div>
-      <div class="flex items-center justify-end gap-2 pt-2">
-        <button id="btn-save-gsheet-url" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition shadow">
-          Lưu & Đồng bộ ngay
-        </button>
-      </div>
-    </div>
-  </div>
 
   <!-- Main JavaScript Controller -->
   <script>
@@ -1961,64 +1925,9 @@
       });
     }
 
-    // Standalone / GitHub Pages Controller
-    function initStandaloneMode() {
-      const btnConfig = document.getElementById('btn-gsheet-config');
-      const modalConfig = document.getElementById('modal-gsheet-config');
-      const btnClose = document.getElementById('btn-close-gsheet-config');
-      const btnSave = document.getElementById('btn-save-gsheet-url');
-      const inputUrl = document.getElementById('input-gsheet-url');
-
-      if (btnConfig) {
-        btnConfig.classList.remove('hidden');
-        btnConfig.classList.add('flex');
-        btnConfig.addEventListener('click', () => {
-          if (inputUrl && window.ArtifactHub.getWebhookUrl) {
-            inputUrl.value = window.ArtifactHub.getWebhookUrl() || '';
-          }
-          if (modalConfig) {
-            modalConfig.classList.remove('hidden');
-            modalConfig.classList.add('flex');
-          }
-        });
-      }
-
-      if (btnClose && modalConfig) {
-        btnClose.addEventListener('click', () => {
-          modalConfig.classList.remove('flex');
-          modalConfig.classList.add('hidden');
-        });
-      }
-
-      if (btnSave) {
-        btnSave.addEventListener('click', async () => {
-          const val = (inputUrl ? inputUrl.value : '').trim();
-          if (window.ArtifactHub.setWebhookUrl) {
-            window.ArtifactHub.setWebhookUrl(val);
-          }
-          if (modalConfig) {
-            modalConfig.classList.remove('flex');
-            modalConfig.classList.add('hidden');
-          }
-          if (val) {
-            showToast('Đang kết nối Google Sheet...', 'info');
-            await loadOrders();
-            showToast('Đã kết nối và đồng bộ với Google Sheet! 📊');
-          } else {
-            showToast('Đã gỡ Google Sheet Webhook.');
-          }
-        });
-      }
-    }
-
     // Startup Initialization
     window.addEventListener('DOMContentLoaded', async () => {
       setupEventListeners();
-
-      // Check if running in standalone mode (e.g. GitHub Pages)
-      if (window.ArtifactHub && window.ArtifactHub.isStandalone) {
-        initStandaloneMode();
-      }
 
       // 1. Load user name from persistent browser storage first
       await safeStorage.init();
