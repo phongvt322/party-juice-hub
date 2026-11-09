@@ -13,6 +13,7 @@ Built to streamline ordering office drinks from [traicaymoingay.com](https://tra
 - 👤 **Participant Identity**: Simple name prompt with persistent browser storage so each team member sees their own selections.
 - 📋 **Prep Checklist**: Automatically aggregates identical drink variations and custom notes to make order verification quick and error-free.
 - ⚡ **1-Click Cart Injector**:
+  - **Auto-Clear Previous Cart**: Option to automatically empty the merchant's cart via `/cart/clear.js` before injecting to avoid duplicate orders or accidental leftover items.
   - **Bookmarklet**: Drag-and-drop button to browser bookmarks bar; click on `traicaymoingay.com` to inject the entire party order into the merchant's cart in seconds.
   - **F12 Console Script**: Copyable snippet to run in DevTools console on the merchant's site.
   - **Zalo / Hotline Bill Summary**: Pre-formatted text summary ready to message the store with company VAT invoicing support.
